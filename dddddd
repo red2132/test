@@ -1,0 +1,138 @@
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+public enum MobinsCategory implements MobinsRateStrategy {
+
+    /* ================= 카테고리 정의 ================= */
+
+    // 전체 데이터 그대로 사용하는 케이스
+    PET {
+        @Override
+        public List<elMobinsRate> build(String selectedDate, List<MobinsResult> resultList) {
+            return singleCategory(
+                    selectedDate,
+                    name(),
+                    resultList,
+                    null
+            );
+        }
+    },
+
+    // PET과 동일한 로직 재사용
+    OWNER_KT_AGENCY {
+        @Override
+        public List<elMobinsRate> build(String selectedDate, List<MobinsResult> resultList) {
+            return PET.build(selectedDate, resultList);
+        }
+    },
+
+    // content 기준으로 분리되는 케이스들
+    PHISHING("PHISHING", "PHISHING_PAID"),
+    OWNER("OWNER", "OWNER_REG_INS_ONLY"),
+    TRIP(
+            "TRIP_SHORT_SINGLE",
+            "TRIP_SHORT_MULTIPLE",
+            "TRIP_LONG_NEW",
+            "TRIP_LONG_EXTEND",
+            "TRIP_SHORT_EVT365_25"
+    );
+
+    /* ================= 내부 필드 ================= */
+
+    // 해당 카테고리가 사용하는 content 목록
+    private final List<String> contents;
+
+    // categoryType 문자열 → enum 매핑 캐시 (valueOf 예외 방지)
+    private static final Map<String, MobinsCategory> CACHE =
+            Arrays.stream(values())
+                    .collect(Collectors.toMap(Enum::name, Function.identity()));
+
+    /* ================= 생성자 ================= */
+
+    MobinsCategory(String... contents) {
+        this.contents = List.of(contents);
+    }
+
+    MobinsCategory() {
+        this.contents = List.of();
+    }
+
+    /* ================= 외부 진입 메서드 ================= */
+
+    /**
+     * categoryType 문자열을 받아 MobinsRate 목록을 생성한다.
+     * - 유효한 categoryType → 해당 enum의 build 실행
+     * - 잘못된 categoryType → 빈 리스트 반환
+     */
+    public static List<elMobinsRate> build(
+            String categoryType,
+            String selectedDate,
+            List<MobinsResult> resultList
+    ) {
+        return Optional.ofNullable(CACHE.get(categoryType))
+                .map(c -> c.build(selectedDate, resultList))
+                .orElseGet(List::of);
+    }
+
+    /* ================= 다형성 기본 구현 ================= */
+
+    /**
+     * content 기반으로 여러 elMobinsRate 를 생성하는 기본 로직
+     * (PHISHING / OWNER / TRIP 등)
+     */
+    @Override
+    public List<elMobinsRate> build(String selectedDate, List<MobinsResult> resultList) {
+        return contents.stream()
+                .flatMap(content ->
+                        singleCategory(
+                                selectedDate,
+                                content,
+                                resultList,
+                                content
+                        ).stream()
+                )
+                .toList();
+    }
+
+    /* ================= 공용 메서드 ================= */
+
+    /**
+     * 단일 카테고리(elMobinsRate 1개)를 생성한다.
+     *
+     * @param categoryName  elMobinsRate 에 들어갈 카테고리 이름
+     * @param contentFilter null 이면 전체, 아니면 해당 content 만 필터링
+     */
+    protected List<elMobinsRate> singleCategory(
+            String selectedDate,
+            String categoryName,
+            List<MobinsResult> resultList,
+            String contentFilter
+    ) {
+        return List.of(
+                elMobinsRate.of(
+                        selectedDate,
+                        categoryName,
+                        toRates(resultList, contentFilter, selectedDate)
+                )
+        );
+    }
+
+    /**
+     * MobinsResult → ElRate 리스트 변환 공통 로직
+     */
+    protected List<elMobinsRate.ElRate> toRates(
+            List<MobinsResult> resultList,
+            String contentFilter,
+            String selectedDate
+    ) {
+        return resultList.stream()
+                .filter(e -> contentFilter == null || contentFilter.equals(e.getContent()))
+                .map(e -> elMobinsRate.ElRate.of(
+                        contentFilter == null ? e.getBasDt() : selectedDate,
+                        e.getPageStep(),
+                        e.getBounceCount()
+                ))
+                .toList();
+    }
+}
